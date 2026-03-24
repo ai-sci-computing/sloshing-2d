@@ -1,0 +1,27 @@
+PROJECT_NAME           = "Sloshing Tank Simulation"
+PROJECT_NUMBER         = 1.0
+PROJECT_BRIEF          = "Interactive 2D sloshing tank with MAC grid Navier-Stokes solver and VOF free-surface tracking"
+
+OUTPUT_DIRECTORY       = docs/doxygen
+INPUT                  = src
+RECURSIVE              = YES
+FILE_PATTERNS          = *.hpp *.cpp
+
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = YES
+EXTRACT_STATIC         = YES
+
+GENERATE_HTML          = YES
+GENERATE_LATEX         = NO
+HTML_OUTPUT            = html
+
+SOURCE_BROWSER         = YES
+INLINE_SOURCES         = NO
+REFERENCED_BY_RELATION = YES
+REFERENCES_RELATION    = YES
+
+OPTIMIZE_OUTPUT_FOR_C  = NO
+BUILTIN_STL_SUPPORT    = YES
+
+QUIET                  = YES
+WARNINGS               = YES
