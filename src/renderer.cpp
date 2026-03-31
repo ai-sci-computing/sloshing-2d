@@ -14,6 +14,7 @@
 
 #include <GLFW/glfw3.h>
 #include <cmath>
+#include <cstdio>
 
 bool Renderer::init(int width, int height, const char* title) {
     if (!glfwInit()) {
@@ -31,22 +32,50 @@ bool Renderer::init(int width, int height, const char* title) {
     }
 
     glfwMakeContextCurrent(window_);
-    glfwSwapInterval(1); // VSync
+    glfwSwapInterval(0); // No VSync — let simulation run as fast as possible
 
     win_width_ = width;
     win_height_ = height;
 
-    // Set up orthographic projection matching the window
+    // Store this pointer for the resize callback
+    glfwSetWindowUserPointer(window_, this);
+
+    // Framebuffer resize callback — updates viewport and projection
+    glfwSetFramebufferSizeCallback(window_, [](GLFWwindow* w, int width, int height) {
+        auto* self = static_cast<Renderer*>(glfwGetWindowUserPointer(w));
+        self->win_width_ = width;
+        self->win_height_ = height;
+        glViewport(0, 0, width, height);
+        glMatrixMode(GL_PROJECTION);
+        glLoadIdentity();
+        glOrtho(0.0, 1.0, 0.0, 1.0, -1.0, 1.0);
+        glMatrixMode(GL_MODELVIEW);
+    });
+
+    // Set up initial orthographic projection
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
-    glOrtho(0.0, 1.0, 0.0, 1.0, -1.0, 1.0); // Normalized [0,1] x [0,1]
+    glOrtho(0.0, 1.0, 0.0, 1.0, -1.0, 1.0);
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
+
+    // Create texture for VOF field rendering
+    glGenTextures(1, &texture_id_);
+    glBindTexture(GL_TEXTURE_2D, texture_id_);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glEnable(GL_TEXTURE_2D);
 
     return true;
 }
 
 void Renderer::shutdown() {
+    if (texture_id_) {
+        glDeleteTextures(1, &texture_id_);
+        texture_id_ = 0;
+    }
     if (window_) {
         glfwDestroyWindow(window_);
         window_ = nullptr;
@@ -75,35 +104,45 @@ void Renderer::render(const Grid& grid, double sim_time, double fps) {
     int nx = grid.NX;
     int ny = grid.NY;
 
-    glBegin(GL_QUADS);
-    for (int i = 0; i < nx; ++i) {
-        for (int j = 0; j < ny; ++j) {
-            float r, g, b;
+    // Build RGB pixel buffer (column-major grid → row-major texture)
+    // Texture pixel (x, y) maps to grid cell (i=x, j=y) with y=0 at bottom.
+    pixel_buf_.resize(nx * ny * 3);
 
+    for (int j = 0; j < ny; ++j) {
+        for (int i = 0; i < nx; ++i) {
+            float r, g, b;
             if (grid.Type(i, j) == CellType::SOLID) {
-                // Walls: dark gray
                 r = 0.3f; g = 0.3f; b = 0.3f;
             } else {
                 vof_to_color(grid.VOF(i, j), r, g, b);
             }
-
-            glColor3f(r, g, b);
-
-            // Normalized coordinates [0,1]
-            float x0 = static_cast<float>(i) / nx;
-            float x1 = static_cast<float>(i + 1) / nx;
-            float y0 = static_cast<float>(j) / ny;
-            float y1 = static_cast<float>(j + 1) / ny;
-
-            glVertex2f(x0, y0);
-            glVertex2f(x1, y0);
-            glVertex2f(x1, y1);
-            glVertex2f(x0, y1);
+            int offset = (j * nx + i) * 3;
+            pixel_buf_[offset + 0] = static_cast<uint8_t>(r * 255.0f);
+            pixel_buf_[offset + 1] = static_cast<uint8_t>(g * 255.0f);
+            pixel_buf_[offset + 2] = static_cast<uint8_t>(b * 255.0f);
         }
     }
+
+    // Upload to texture
+    glBindTexture(GL_TEXTURE_2D, texture_id_);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, nx, ny, 0,
+                 GL_RGB, GL_UNSIGNED_BYTE, pixel_buf_.data());
+
+    // Draw a single textured quad covering [0,1] x [0,1]
+    glColor3f(1.0f, 1.0f, 1.0f); // Texture color is not modulated
+    glBegin(GL_QUADS);
+    glTexCoord2f(0.0f, 0.0f); glVertex2f(0.0f, 0.0f);
+    glTexCoord2f(1.0f, 0.0f); glVertex2f(1.0f, 0.0f);
+    glTexCoord2f(1.0f, 1.0f); glVertex2f(1.0f, 1.0f);
+    glTexCoord2f(0.0f, 1.0f); glVertex2f(0.0f, 1.0f);
     glEnd();
 
     glfwSwapBuffers(window_);
+
+    // Update window title with FPS and simulation time
+    char title[128];
+    std::snprintf(title, sizeof(title), "Sloshing Tank  |  %.1f FPS  |  t = %.2f s", fps, sim_time);
+    glfwSetWindowTitle(window_, title);
 }
 
 InputState Renderer::poll_input() {

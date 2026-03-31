@@ -13,14 +13,15 @@
 #include "solver.hpp"
 #include "vof.hpp"
 #include "renderer.hpp"
+#include <memory>
 
 /**
  * @struct SimConfig
  * @brief Configuration for the simulation.
  */
 struct SimConfig {
-    int nx = 128;              ///< Grid cells in x
-    int ny = 64;               ///< Grid cells in y
+    int nx = 256;              ///< Grid cells in x
+    int ny = 128;              ///< Grid cells in y
     double lx = 2.0;           ///< Tank width [m]
     double ly = 1.0;           ///< Tank height [m]
     double fill_fraction = 0.4; ///< Initial water fill level
@@ -55,7 +56,7 @@ public:
 
 private:
     SimConfig config_;
-    Grid* grid_ = nullptr;
+    std::unique_ptr<Grid> grid_;
     Solver solver_;
     VOFTransport vof_transport_;
     Renderer renderer_;

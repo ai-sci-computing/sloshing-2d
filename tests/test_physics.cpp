@@ -57,7 +57,6 @@ TEST_CASE("Hydrostatic pressure profile matches analytical solution") {
     SolverParams sp;
     sp.gravity = 9.81;
     sp.density = 1000.0;
-    sp.viscosity = 0.01;
     sp.pressure_iters = 200;
     sp.pressure_tol = 1e-6;
     sp.sor_omega = 1.8;
@@ -153,8 +152,8 @@ TEST_CASE("Hydrostatic pressure profile matches analytical solution") {
  * resolution with a first-order-in-practice advection scheme.
  */
 TEST_CASE("First-mode sloshing frequency matches linear theory") {
-    int nx = 128;
-    int ny = 64;
+    int nx = 256;
+    int ny = 128;
     double lx = 2.0;
     double ly = 1.0;
     double mean_depth = 0.4; // Mean water depth [m]
@@ -195,7 +194,6 @@ TEST_CASE("First-mode sloshing frequency matches linear theory") {
     SolverParams sp;
     sp.gravity = 9.81;
     sp.density = 1000.0;
-    sp.viscosity = 0.001; // Low viscosity to minimize damping
     sp.pressure_iters = 150;
     sp.pressure_tol = 1e-5;
     sp.sor_omega = 1.8;

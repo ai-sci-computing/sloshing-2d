@@ -23,7 +23,7 @@
 struct SolverParams {
     double gravity = 9.81;       ///< Gravitational acceleration [m/s²]
     double density = 1000.0;     ///< Fluid density [kg/m³]
-    double viscosity = 0.001;    ///< Dynamic viscosity [Pa·s] (may be increased for stability)
+    double surface_tension = 0.072; ///< Surface tension coefficient [N/m] (water-air ~0.072)
     double cfl = 0.5;            ///< CFL number for adaptive timestep
     double min_dt = 1e-6;        ///< Minimum timestep [s]
     double max_dt = 0.01;        ///< Maximum timestep [s]
@@ -111,6 +111,17 @@ public:
      * @param dt Timestep [s]
      */
     void project_velocity(Grid& grid, double dt);
+
+    /**
+     * @brief Apply surface tension force via the Continuum Surface Force (CSF) model.
+     *
+     * Computes interface curvature from the VOF gradient field and applies a
+     * body force F = σ·κ·∇α / ρ at velocity faces near the interface.
+     *
+     * @param grid The simulation grid
+     * @param dt Timestep [s]
+     */
+    void apply_surface_tension(Grid& grid, double dt);
 
     /**
      * @brief Compute the maximum divergence of the velocity field.

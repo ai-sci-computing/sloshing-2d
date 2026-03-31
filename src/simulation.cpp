@@ -4,6 +4,7 @@
  */
 
 #include "simulation.hpp"
+#include <memory>
 
 #ifdef __APPLE__
 #define GL_SILENCE_DEPRECATION
@@ -16,16 +17,15 @@
 bool Simulation::init(const SimConfig& config) {
     config_ = config;
 
-    grid_ = new Grid(config_.nx, config_.ny, config_.lx, config_.ly);
+    grid_ = std::make_unique<Grid>(config_.nx, config_.ny, config_.lx, config_.ly);
     grid_->initialize_water(config_.fill_fraction);
     vof_transport_.set_reference_volume(*grid_);
 
     SolverParams sp;
-    sp.viscosity = 0.01;       // Effective eddy viscosity for visual simulation
-    sp.pressure_iters = 100;   // Warm-start needs fewer iterations
-    sp.pressure_tol = 1e-5;   // Tight tolerance for divergence-free field
-    sp.sor_omega = 1.85;       // Aggressive relaxation for faster convergence
-    sp.cfl = 0.4;
+    sp.pressure_iters = 60;    // Warm-start needs fewer iterations
+    sp.pressure_tol = 1e-4;   // Relaxed for real-time at higher resolution
+    sp.sor_omega = 1.975;      // Near-optimal for Red-Black SOR at 256x128
+    sp.cfl = 0.5;
     solver_ = Solver(sp);
 
     if (!renderer_.init(config_.win_width, config_.win_height, "Sloshing Tank Simulation")) {
@@ -107,7 +107,7 @@ void Simulation::run() {
         if (!paused_) {
             double budget = frame_dt * config_.speed_multiplier;
             double accumulated = 0.0;
-            int max_substeps = 20;
+            int max_substeps = 10;
 
             for (int s = 0; s < max_substeps && accumulated < budget; ++s) {
                 double dt = solver_.step(*grid_, tank_ax, tank_ay);
@@ -124,6 +124,5 @@ void Simulation::run() {
 
 void Simulation::shutdown() {
     renderer_.shutdown();
-    delete grid_;
-    grid_ = nullptr;
+    grid_.reset();
 }

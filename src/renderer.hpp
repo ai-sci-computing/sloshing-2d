@@ -10,6 +10,8 @@
 #pragma once
 
 #include "grid.hpp"
+#include <vector>
+#include <cstdint>
 
 // Forward-declare GLFWwindow to avoid including GLFW in the header
 struct GLFWwindow;
@@ -78,6 +80,8 @@ private:
     GLFWwindow* window_ = nullptr;
     int win_width_  = 0;
     int win_height_ = 0;
+    unsigned int texture_id_ = 0;
+    std::vector<uint8_t> pixel_buf_; ///< RGB pixel buffer for texture upload
 
     /**
      * @brief Map a VOF value to an RGBA color.

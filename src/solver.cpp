@@ -22,13 +22,7 @@ double Solver::compute_dt(const Grid& grid) const {
         }
     }
 
-    double dt_cfl = params.cfl * std::min(grid.dx, grid.dy) / max_vel;
-
-    // Viscous stability limit (explicit diffusion)
-    double dt_visc = 0.25 * std::min(grid.dx * grid.dx, grid.dy * grid.dy)
-                     * params.density / std::max(params.viscosity, 1e-10);
-
-    double dt = std::min(dt_cfl, dt_visc);
+    double dt = params.cfl * std::min(grid.dx, grid.dy) / max_vel;
     return std::clamp(dt, params.min_dt, params.max_dt);
 }
 
@@ -125,24 +119,18 @@ int Solver::solve_pressure(Grid& grid, double dt) {
     double dx2 = grid.dx * grid.dx;
     double dy2 = grid.dy * grid.dy;
 
-    int iter = 0;
-    for (; iter < params.pressure_iters; ++iter) {
-        double max_residual = 0.0;
-
+    // Red-Black SOR: sweep red cells (i+j even) then black cells (i+j odd).
+    // Within each color, updates are independent and can be parallelized.
+    auto sor_sweep = [&](int color, double& max_residual) {
         for (int i = 1; i < grid.NX - 1; ++i) {
             for (int j = 1; j < grid.NY - 1; ++j) {
+                if ((i + j) % 2 != color) continue;
                 if (grid.Type(i, j) != CellType::FLUID) continue;
 
-                // Divergence of intermediate velocity at cell (i,j)
                 double div = (grid.U(i + 1, j) - grid.U(i, j)) / grid.dx
                            + (grid.V(i, j + 1) - grid.V(i, j)) / grid.dy;
 
-                // Count valid neighbors and sum their pressures
-                // SOLID neighbor: ∂p/∂n = 0 → use p_center
-                // EMPTY neighbor: p = 0 (free surface)
-                // FLUID neighbor: use p_neighbor
                 double p_sum = 0.0;
-                int n_neighbors = 0;
                 double coeff = 0.0;
 
                 auto add_neighbor = [&](int ni, int nj, double h2) {
@@ -151,10 +139,8 @@ int Solver::solve_pressure(Grid& grid, double dt) {
                         p_sum += grid.P(ni, nj) / h2;
                         coeff += 1.0 / h2;
                     } else if (t == CellType::EMPTY) {
-                        // p = 0 at free surface → contributes 0 to sum
                         coeff += 1.0 / h2;
                     }
-                    // SOLID: Neumann BC → skip (effectively p_neighbor = p_center)
                 };
 
                 add_neighbor(i - 1, j, dx2);
@@ -162,17 +148,22 @@ int Solver::solve_pressure(Grid& grid, double dt) {
                 add_neighbor(i, j - 1, dy2);
                 add_neighbor(i, j + 1, dy2);
 
-                if (coeff < 1e-10) continue; // Isolated cell
+                if (coeff < 1e-10) continue;
 
                 double p_new = (p_sum - scale * div) / coeff;
                 double residual = std::abs(p_new - grid.P(i, j));
                 max_residual = std::max(max_residual, residual);
 
-                // SOR update
                 grid.P(i, j) += params.sor_omega * (p_new - grid.P(i, j));
             }
         }
+    };
 
+    int iter = 0;
+    for (; iter < params.pressure_iters; ++iter) {
+        double max_residual = 0.0;
+        sor_sweep(0, max_residual); // Red
+        sor_sweep(1, max_residual); // Black
         if (max_residual < params.pressure_tol) break;
     }
 
@@ -220,6 +211,70 @@ double Solver::max_divergence(const Grid& grid) const {
     return max_div;
 }
 
+void Solver::apply_surface_tension(Grid& grid, double dt) {
+    if (params.surface_tension <= 0.0) return;
+
+    int NX = grid.NX;
+    int NY = grid.NY;
+    double dx = grid.dx;
+    double dy = grid.dy;
+
+    // Compute smoothed VOF gradient components and curvature at cell centers.
+    // Curvature: κ = -∇·n̂, where n̂ = ∇α / |∇α|
+    std::vector<double> kappa(NX * NY, 0.0);
+
+    // Start at i=2,j=2 to avoid stencil reaching into SOLID boundary cells
+    // where VOF=0 creates artificial gradients and spurious curvature.
+    for (int i = 2; i < NX - 2; ++i) {
+        for (int j = 2; j < NY - 2; ++j) {
+            double dfdx = (grid.VOF(i + 1, j) - grid.VOF(i - 1, j)) / (2.0 * dx);
+            double dfdy = (grid.VOF(i, j + 1) - grid.VOF(i, j - 1)) / (2.0 * dy);
+            double mag = std::sqrt(dfdx * dfdx + dfdy * dfdy);
+
+            if (mag < 1e-8) continue; // Not at interface
+
+            // Second derivatives for curvature via divergence of the normal
+            double d2fdx2 = (grid.VOF(i + 1, j) - 2.0 * grid.VOF(i, j) + grid.VOF(i - 1, j)) / (dx * dx);
+            double d2fdy2 = (grid.VOF(i, j + 1) - 2.0 * grid.VOF(i, j) + grid.VOF(i, j - 1)) / (dy * dy);
+
+            // Mixed derivative
+            double d2fdxdy = (grid.VOF(i + 1, j + 1) - grid.VOF(i - 1, j + 1)
+                            - grid.VOF(i + 1, j - 1) + grid.VOF(i - 1, j - 1))
+                           / (4.0 * dx * dy);
+
+            // κ = -(dfdx²·d2fdy2 - 2·dfdx·dfdy·d2fdxdy + dfdy²·d2fdx2) / |∇f|³
+            double mag3 = mag * mag * mag;
+            kappa[grid.idx(i, j)] = -(dfdx * dfdx * d2fdy2
+                                     - 2.0 * dfdx * dfdy * d2fdxdy
+                                     + dfdy * dfdy * d2fdx2) / mag3;
+        }
+    }
+
+    // Apply CSF force to u-velocity faces: F_x = σ·κ·(∂α/∂x) / ρ
+    double sigma_over_rho = params.surface_tension / params.density;
+
+    for (int i = 2; i < NX - 1; ++i) {
+        for (int j = 1; j < NY - 1; ++j) {
+            // Average curvature to face
+            double kappa_face = 0.5 * (kappa[grid.idx(i - 1, j)] + kappa[grid.idx(i, j)]);
+            // VOF gradient at face
+            double dfdx = (grid.VOF(i, j) - grid.VOF(i - 1, j)) / dx;
+
+            grid.U(i, j) += dt * sigma_over_rho * kappa_face * dfdx;
+        }
+    }
+
+    // Apply CSF force to v-velocity faces: F_y = σ·κ·(∂α/∂y) / ρ
+    for (int i = 1; i < NX - 1; ++i) {
+        for (int j = 2; j < NY - 1; ++j) {
+            double kappa_face = 0.5 * (kappa[grid.idx(i, j - 1)] + kappa[grid.idx(i, j)]);
+            double dfdy = (grid.VOF(i, j) - grid.VOF(i, j - 1)) / dy;
+
+            grid.V(i, j) += dt * sigma_over_rho * kappa_face * dfdy;
+        }
+    }
+}
+
 double Solver::step(Grid& grid, double tank_ax, double tank_ay) {
     double dt = compute_dt(grid);
 
@@ -231,6 +286,9 @@ double Solver::step(Grid& grid, double tank_ax, double tank_ay) {
 
     // 3. Apply body forces (gravity + tank acceleration)
     apply_body_forces(grid, dt, tank_ax, tank_ay);
+
+    // 3b. Apply surface tension (CSF model)
+    apply_surface_tension(grid, dt);
 
     // 4. Enforce BCs before pressure solve
     grid.enforce_boundary_conditions();

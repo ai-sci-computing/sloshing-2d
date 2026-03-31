@@ -187,11 +187,41 @@ void VOFTransport::correct_mass(Grid& grid) {
     double current = total_volume(grid);
     if (current < 1e-14) return;
 
-    double ratio = reference_volume_ / current;
+    double cell_area = grid.dx * grid.dy;
+    double volume_error = current - reference_volume_;
+
+    // Collect interfacial cells (0 < VOF < 1) for targeted correction.
+    // This preserves fully-filled and fully-empty cells, keeping the
+    // interface sharp instead of smearing the correction globally.
+    double interface_volume = 0.0;
+    for (int i = 1; i < grid.NX - 1; ++i) {
+        for (int j = 1; j < grid.NY - 1; ++j) {
+            double f = grid.VOF(i, j);
+            if (f > 0.0 && f < 1.0) {
+                interface_volume += f * cell_area;
+            }
+        }
+    }
+
+    // Fall back to global correction if no interfacial cells exist
+    if (interface_volume < 1e-14) {
+        double ratio = reference_volume_ / current;
+        for (int i = 1; i < grid.NX - 1; ++i)
+            for (int j = 1; j < grid.NY - 1; ++j)
+                grid.VOF(i, j) = std::clamp(grid.VOF(i, j) * ratio, 0.0, 1.0);
+        return;
+    }
+
+    // Distribute the error proportionally among interfacial cells
+    double correction_ratio = (interface_volume - volume_error) / interface_volume;
+    correction_ratio = std::max(correction_ratio, 0.0);
 
     for (int i = 1; i < grid.NX - 1; ++i) {
         for (int j = 1; j < grid.NY - 1; ++j) {
-            grid.VOF(i, j) = std::clamp(grid.VOF(i, j) * ratio, 0.0, 1.0);
+            double f = grid.VOF(i, j);
+            if (f > 0.0 && f < 1.0) {
+                grid.VOF(i, j) = std::clamp(f * correction_ratio, 0.0, 1.0);
+            }
         }
     }
 }
