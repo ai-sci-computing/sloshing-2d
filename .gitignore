@@ -7,3 +7,6 @@ compile_commands.json
 
 # Screenshots (local only)
 Screenshots/
+
+# Generated documentation
+docs/doxygen/
