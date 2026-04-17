@@ -30,6 +30,8 @@ struct InputState {
     bool quit  = false; ///< Exit application
     bool speed_up   = false; ///< Increase simulation speed
     bool speed_down = false; ///< Decrease simulation speed
+    int  ic_select  = 0;  ///< 0 = no change, otherwise IC index (1, 2, 3)
+    bool toggle_tension = false; ///< T key — toggle surface tension on/off
 };
 
 /**
@@ -61,8 +63,12 @@ public:
      * @param grid The simulation grid to render
      * @param sim_time Current simulation time [s]
      * @param fps Current frames per second
+     * @param max_div Max divergence in fluid cells (solver convergence) [1/s]
+     * @param ic_label Short label for the active initial condition
+     * @param tension_on Whether surface tension is currently active
      */
-    void render(const Grid& grid, double sim_time, double fps);
+    void render(const Grid& grid, double sim_time, double fps,
+                double max_div, const char* ic_label, bool tension_on);
 
     /**
      * @brief Poll input events and return the current input state.

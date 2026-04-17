@@ -55,70 +55,41 @@ TEST_CASE("Grid field accessors") {
 TEST_CASE("Cell classification") {
     Grid grid(8, 4, 1.0, 0.5);
 
-    // Set up some VOF values
-    grid.VOF(3, 2) = 0.8; // Should be FLUID
-    grid.VOF(4, 2) = 0.005; // Below threshold → EMPTY
-    grid.VOF(0, 0) = 1.0; // Boundary → SOLID regardless of VOF
+    // No obstacle flags set → classification is purely VOF-based.
+    grid.VOF(3, 2) = 0.8;     // FLUID
+    grid.VOF(4, 2) = 0.005;   // below threshold → EMPTY
+    grid.VOF(0, 0) = 1.0;     // border cell: no longer forced SOLID
+    grid.VOF(7, 3) = 0.0;     // EMPTY
 
     grid.classify_cells();
 
-    // Boundaries are SOLID
-    CHECK(grid.Type(0, 0) == CellType::SOLID);
-    CHECK(grid.Type(7, 0) == CellType::SOLID);
-    CHECK(grid.Type(0, 3) == CellType::SOLID);
-    CHECK(grid.Type(3, 0) == CellType::SOLID);
-
-    // Interior cells classified by VOF
     CHECK(grid.Type(3, 2) == CellType::FLUID);
     CHECK(grid.Type(4, 2) == CellType::EMPTY);
+    CHECK(grid.Type(0, 0) == CellType::FLUID);
+    CHECK(grid.Type(7, 3) == CellType::EMPTY);
+
+    // Internal obstacle flag forces SOLID regardless of VOF.
+    grid.is_obstacle[grid.idx(2, 1)] = 1;
+    grid.VOF(2, 1) = 0.9;
+    grid.classify_cells();
+    CHECK(grid.Type(2, 1) == CellType::SOLID);
 }
 
 TEST_CASE("Water initialization") {
     Grid grid(16, 8, 2.0, 1.0);
     grid.initialize_water(0.5); // Fill bottom half
 
-    // Boundary cells always have VOF=0 (SOLID walls)
-    CHECK(grid.VOF(8, 0) == doctest::Approx(0.0));
-    CHECK(grid.VOF(0, 2) == doctest::Approx(0.0));
-
-    // Interior cell at top (j=6): above water
+    // No SOLID border any more: bottom-row cells are submerged.
+    // Water height = 0.5 m, dy = 1/8 = 0.125 m.
+    // j=0..3 fully submerged; j=4..7 empty.
+    CHECK(grid.VOF(8, 0) == doctest::Approx(1.0));
+    CHECK(grid.VOF(0, 2) == doctest::Approx(1.0));
+    CHECK(grid.VOF(8, 3) == doctest::Approx(1.0));
+    CHECK(grid.VOF(8, 4) == doctest::Approx(0.0));
     CHECK(grid.VOF(8, 6) == doctest::Approx(0.0));
 
-    // Interior cell below water line: fully submerged
-    // Water height = 0.5m, dy = 1.0/8 = 0.125m
-    // j=3: bottom at 0.375, top at 0.5 → fully submerged (VOF=1)
-    CHECK(grid.VOF(8, 3) == doctest::Approx(1.0));
-    // j=4: bottom at 0.5, top at 0.625 → VOF=0
-    CHECK(grid.VOF(8, 4) == doctest::Approx(0.0));
-
-    // Velocities should all be zero
     for (auto val : grid.u) CHECK(val == doctest::Approx(0.0));
     for (auto val : grid.v) CHECK(val == doctest::Approx(0.0));
-}
-
-TEST_CASE("Boundary condition enforcement") {
-    Grid grid(8, 4, 1.0, 0.5);
-
-    // Set some interior velocities
-    for (int i = 0; i <= grid.NX; ++i)
-        for (int j = 0; j < grid.NY; ++j)
-            grid.U(i, j) = 1.0;
-
-    for (int i = 0; i < grid.NX; ++i)
-        for (int j = 0; j <= grid.NY; ++j)
-            grid.V(i, j) = 1.0;
-
-    grid.enforce_boundary_conditions();
-
-    // Normal velocity at walls must be zero
-    for (int j = 0; j < grid.NY; ++j) {
-        CHECK(grid.U(0, j) == doctest::Approx(0.0)); // Left wall
-        CHECK(grid.U(grid.NX, j) == doctest::Approx(0.0)); // Right wall
-    }
-    for (int i = 0; i < grid.NX; ++i) {
-        CHECK(grid.V(i, 0) == doctest::Approx(0.0)); // Bottom wall
-        CHECK(grid.V(i, grid.NY) == doctest::Approx(0.0)); // Top wall
-    }
 }
 
 TEST_CASE("Velocity interpolation at cell centers") {

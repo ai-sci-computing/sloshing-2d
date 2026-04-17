@@ -113,6 +113,29 @@ public:
     void project_velocity(Grid& grid, double dt);
 
     /**
+     * @brief Extrapolate fluid-face velocities into the adjacent air band.
+     *
+     * Faces that have no FLUID neighbor carry no physically-set velocity
+     * (body forces and projection skip them). Semi-Lagrangian back-trace
+     * that lands on such a face otherwise picks up zero, which manifests
+     * as severe damping of any motion whose departure point is just above
+     * the free surface or behind an obstacle.
+     *
+     * Iterative neighbor-averaging extrapolation: for `n_layers` passes,
+     * any undefined face adopts the mean of its defined 4-face neighbors
+     * and becomes defined itself. This produces a constant-style
+     * extrapolation a few cells deep into the EMPTY region. Wall faces
+     * keep their zero value and act as sources that fix the tangential
+     * free-slip condition along solid boundaries.
+     *
+     * Must be called AFTER classify_cells and BEFORE advect_velocity.
+     *
+     * @param grid The simulation grid
+     * @param n_layers How many cells deep to extrapolate (default 3)
+     */
+    void extrapolate_velocity_to_air(Grid& grid, int n_layers = 3);
+
+    /**
      * @brief Apply surface tension force via the Continuum Surface Force (CSF) model.
      *
      * Computes interface curvature from the VOF gradient field and applies a
@@ -132,4 +155,7 @@ public:
      * @return Maximum absolute divergence across all fluid cells
      */
     double max_divergence(const Grid& grid) const;
+
+    /// @brief Last max divergence in fluid cells, computed inside step().
+    double last_max_divergence = 0.0;
 };

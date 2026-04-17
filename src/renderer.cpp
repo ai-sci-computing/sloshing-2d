@@ -98,7 +98,8 @@ void Renderer::vof_to_color(double vof_value, float& r, float& g, float& b) cons
     b = static_cast<float>(1.0  * (1.0 - f) + 0.6  * f);
 }
 
-void Renderer::render(const Grid& grid, double sim_time, double fps) {
+void Renderer::render(const Grid& grid, double sim_time, double fps,
+                      double max_div, const char* ic_label, bool tension_on) {
     glClear(GL_COLOR_BUFFER_BIT);
 
     int nx = grid.NX;
@@ -139,9 +140,10 @@ void Renderer::render(const Grid& grid, double sim_time, double fps) {
 
     glfwSwapBuffers(window_);
 
-    // Update window title with FPS and simulation time
-    char title[128];
-    std::snprintf(title, sizeof(title), "Sloshing Tank  |  %.1f FPS  |  t = %.2f s", fps, sim_time);
+    char title[224];
+    std::snprintf(title, sizeof(title),
+                  "Sloshing Tank  |  IC: %s  |  surface tension: %s  |  %.1f FPS  |  t = %.2f s  |  max|div u| = %.2e 1/s",
+                  ic_label, tension_on ? "on" : "off", fps, sim_time, max_div);
     glfwSetWindowTitle(window_, title);
 }
 
@@ -163,6 +165,19 @@ InputState Renderer::poll_input() {
                        glfwGetKey(window_, GLFW_KEY_Q)     == GLFW_PRESS;
     state.speed_up   = glfwGetKey(window_, GLFW_KEY_EQUAL) == GLFW_PRESS; // +/=
     state.speed_down = glfwGetKey(window_, GLFW_KEY_MINUS) == GLFW_PRESS;
+
+    // Initial-condition selection (latest pressed wins)
+    if      (glfwGetKey(window_, GLFW_KEY_1) == GLFW_PRESS) state.ic_select = 1;
+    else if (glfwGetKey(window_, GLFW_KEY_2) == GLFW_PRESS) state.ic_select = 2;
+    else if (glfwGetKey(window_, GLFW_KEY_3) == GLFW_PRESS) state.ic_select = 3;
+    else if (glfwGetKey(window_, GLFW_KEY_4) == GLFW_PRESS) state.ic_select = 4;
+    else if (glfwGetKey(window_, GLFW_KEY_5) == GLFW_PRESS) state.ic_select = 5;
+    else if (glfwGetKey(window_, GLFW_KEY_6) == GLFW_PRESS) state.ic_select = 6;
+    else if (glfwGetKey(window_, GLFW_KEY_7) == GLFW_PRESS) state.ic_select = 7;
+    else if (glfwGetKey(window_, GLFW_KEY_8) == GLFW_PRESS) state.ic_select = 8;
+    else if (glfwGetKey(window_, GLFW_KEY_9) == GLFW_PRESS) state.ic_select = 9;
+
+    state.toggle_tension = glfwGetKey(window_, GLFW_KEY_T) == GLFW_PRESS;
 
     return state;
 }

@@ -44,8 +44,7 @@ private:
     int step_count_ = 0;
     double reference_volume_ = -1;
 
-    void advect_x(Grid& grid, double dt);
-    void advect_y(Grid& grid, double dt);
+    void advect_plic(Grid& grid, double dt);
 
     /**
      * @brief Sharpen the interface via algebraic compression.

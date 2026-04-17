@@ -13,15 +13,15 @@ Grid::Grid(int nx, int ny, double lx, double ly)
       v(nx * (ny + 1), 0.0),
       p(nx * ny, 0.0),
       vof(nx * ny, 0.0),
-      cell_type(nx * ny, CellType::EMPTY)
+      cell_type(nx * ny, CellType::EMPTY),
+      is_obstacle(nx * ny, 0)
 {
 }
 
 void Grid::classify_cells(double threshold) {
     for (int i = 0; i < NX; ++i) {
         for (int j = 0; j < NY; ++j) {
-            // Boundary cells are SOLID walls
-            if (i == 0 || i == NX - 1 || j == 0 || j == NY - 1) {
+            if (is_obstacle[idx(i, j)]) {
                 Type(i, j) = CellType::SOLID;
             } else if (VOF(i, j) > threshold) {
                 Type(i, j) = CellType::FLUID;
@@ -32,54 +32,15 @@ void Grid::classify_cells(double threshold) {
     }
 }
 
-void Grid::enforce_boundary_conditions() {
-    // Left and right walls: u = 0 at wall faces
-    for (int j = 0; j < NY; ++j) {
-        U(0, j) = 0.0;  // Left wall
-        U(1, j) = 0.0;  // Inner face of left SOLID layer
-        U(NX - 1, j) = 0.0; // Inner face of right SOLID layer
-        U(NX, j) = 0.0; // Right wall
-    }
-
-    // Bottom and top walls: v = 0 at wall faces
-    for (int i = 0; i < NX; ++i) {
-        V(i, 0) = 0.0;  // Bottom wall
-        V(i, 1) = 0.0;  // Inner face of bottom SOLID layer
-        V(i, NY - 1) = 0.0; // Inner face of top SOLID layer
-        V(i, NY) = 0.0; // Top wall
-    }
-
-    // Free-slip tangential BC: reflect velocity into solid cells
-    // Bottom/top: u in solid row mirrors the adjacent fluid row
-    for (int i = 1; i < NX; ++i) {
-        // j=0 is solid: tangential u mirrors from j=1
-        U(i, 0) = U(i, 1);
-        // j=NY-1 is solid: tangential u mirrors from j=NY-2
-        if (NY >= 2) U(i, NY - 1) = U(i, NY - 2);
-    }
-
-    // Left/right: v in solid column mirrors the adjacent fluid column
-    for (int j = 1; j < NY; ++j) {
-        // i=0 is solid: tangential v mirrors from i=1
-        V(0, j) = V(1, j);
-        // i=NX-1 is solid: tangential v mirrors from i=NX-2
-        if (NX >= 2) V(NX - 1, j) = V(NX - 2, j);
-    }
-}
-
 void Grid::initialize_water(double fill_fraction) {
+    std::fill(is_obstacle.begin(), is_obstacle.end(), 0);
+
     double water_height = fill_fraction * Ly;
 
     for (int i = 0; i < NX; ++i) {
         for (int j = 0; j < NY; ++j) {
-            // Boundary cells are SOLID walls — no fluid
-            if (i == 0 || i == NX - 1 || j == 0 || j == NY - 1) {
-                VOF(i, j) = 0.0;
-                continue;
-            }
-
             double y_bottom = j * dy;
-            double y_top = (j + 1) * dy;
+            double y_top    = (j + 1) * dy;
 
             if (y_top <= water_height) {
                 VOF(i, j) = 1.0;
@@ -91,12 +52,158 @@ void Grid::initialize_water(double fill_fraction) {
         }
     }
 
-    // Zero velocity everywhere
     std::fill(u.begin(), u.end(), 0.0);
     std::fill(v.begin(), v.end(), 0.0);
     std::fill(p.begin(), p.end(), 0.0);
 
     classify_cells();
+}
+
+void Grid::initialize_dambreak(double column_width_frac, double column_height_frac) {
+    std::fill(is_obstacle.begin(), is_obstacle.end(), 0);
+    std::fill(vof.begin(), vof.end(), 0.0);
+
+    double col_w = std::clamp(column_width_frac,  0.05, 0.95) * Lx;
+    double col_h = std::clamp(column_height_frac, 0.05, 0.95) * Ly;
+
+    for (int i = 0; i < NX; ++i) {
+        double x_left  = i * dx;
+        double x_right = (i + 1) * dx;
+        for (int j = 0; j < NY; ++j) {
+            double y_bottom = j * dy;
+            double y_top    = (j + 1) * dy;
+
+            if (x_left >= col_w || y_bottom >= col_h) { VOF(i, j) = 0.0; continue; }
+
+            double frac_x = (std::min(x_right, col_w) - x_left) / dx;
+            double frac_y = (std::min(y_top,    col_h) - y_bottom) / dy;
+            VOF(i, j) = std::clamp(frac_x * frac_y, 0.0, 1.0);
+        }
+    }
+
+    std::fill(u.begin(), u.end(), 0.0);
+    std::fill(v.begin(), v.end(), 0.0);
+    std::fill(p.begin(), p.end(), 0.0);
+
+    classify_cells();
+}
+
+void Grid::initialize_dambreak_baffle(double column_width_frac,
+                                      double column_height_frac,
+                                      double baffle_x_frac,
+                                      double baffle_height_frac,
+                                      int baffle_thickness_cells) {
+    initialize_dambreak(column_width_frac, column_height_frac);
+
+    int i_center = std::clamp(static_cast<int>(baffle_x_frac * NX), 1, NX - 2);
+    int half = std::max(1, baffle_thickness_cells) / 2;
+    int i_lo = std::max(0, i_center - half);
+    int i_hi = std::min(NX - 1, i_center + (baffle_thickness_cells - half - 1));
+    int j_top = std::clamp(static_cast<int>(baffle_height_frac * NY), 1, NY - 1);
+
+    for (int i = i_lo; i <= i_hi; ++i) {
+        for (int j = 0; j < j_top; ++j) {
+            is_obstacle[idx(i, j)] = 1;
+            VOF(i, j) = 0.0;
+        }
+    }
+
+    classify_cells();
+}
+
+void Grid::initialize_tilted_surface(double fill_fraction, double amplitude) {
+    std::fill(is_obstacle.begin(), is_obstacle.end(), 0);
+
+    double mean_h = fill_fraction * Ly;
+
+    for (int i = 0; i < NX; ++i) {
+        double x_center = (i + 0.5) * dx;
+        double local_h = mean_h + amplitude * (x_center - Lx / 2.0) / (Lx / 2.0);
+        local_h = std::max(local_h, 0.0);
+
+        for (int j = 0; j < NY; ++j) {
+            double y_bottom = j * dy;
+            double y_top = (j + 1) * dy;
+
+            if (y_top <= local_h) VOF(i, j) = 1.0;
+            else if (y_bottom >= local_h) VOF(i, j) = 0.0;
+            else VOF(i, j) = (local_h - y_bottom) / dy;
+        }
+    }
+
+    std::fill(u.begin(), u.end(), 0.0);
+    std::fill(v.begin(), v.end(), 0.0);
+    std::fill(p.begin(), p.end(), 0.0);
+    classify_cells();
+}
+
+void Grid::initialize_central_column(double column_width_frac, double column_height_frac) {
+    std::fill(is_obstacle.begin(), is_obstacle.end(), 0);
+    std::fill(vof.begin(), vof.end(), 0.0);
+
+    double col_w = std::clamp(column_width_frac, 0.05, 0.95) * Lx;
+    double col_h = std::clamp(column_height_frac, 0.05, 0.95) * Ly;
+    double x_lo = (Lx - col_w) / 2.0;
+    double x_hi = (Lx + col_w) / 2.0;
+
+    for (int i = 0; i < NX; ++i) {
+        double xl = i * dx, xr = (i + 1) * dx;
+        if (xl >= x_hi || xr <= x_lo) continue;
+        double fx = (std::min(xr, x_hi) - std::max(xl, x_lo)) / dx;
+
+        for (int j = 0; j < NY; ++j) {
+            double yb = j * dy, yt = (j + 1) * dy;
+            if (yb >= col_h) continue;
+            double fy = (std::min(yt, col_h) - yb) / dy;
+            VOF(i, j) = std::clamp(fx * fy, 0.0, 1.0);
+        }
+    }
+
+    std::fill(u.begin(), u.end(), 0.0);
+    std::fill(v.begin(), v.end(), 0.0);
+    std::fill(p.begin(), p.end(), 0.0);
+    classify_cells();
+}
+
+void Grid::initialize_two_columns(double column_width_frac, double column_height_frac,
+                                  double gap_frac) {
+    std::fill(is_obstacle.begin(), is_obstacle.end(), 0);
+    std::fill(vof.begin(), vof.end(), 0.0);
+
+    double col_w = std::clamp(column_width_frac, 0.05, 0.4) * Lx;
+    double col_h = std::clamp(column_height_frac, 0.05, 0.95) * Ly;
+    double gap = std::clamp(gap_frac, 0.1, 0.8) * Lx;
+    double x_left_hi = (Lx - gap) / 2.0;
+    double x_left_lo = x_left_hi - col_w;
+    double x_right_lo = (Lx + gap) / 2.0;
+    double x_right_hi = x_right_lo + col_w;
+
+    for (int i = 0; i < NX; ++i) {
+        double xl = i * dx, xr = (i + 1) * dx;
+
+        double fx = 0.0;
+        if (xr > x_left_lo && xl < x_left_hi)
+            fx = (std::min(xr, x_left_hi) - std::max(xl, x_left_lo)) / dx;
+        else if (xr > x_right_lo && xl < x_right_hi)
+            fx = (std::min(xr, x_right_hi) - std::max(xl, x_right_lo)) / dx;
+        if (fx <= 0.0) continue;
+
+        for (int j = 0; j < NY; ++j) {
+            double yb = j * dy, yt = (j + 1) * dy;
+            if (yb >= col_h) continue;
+            double fy = (std::min(yt, col_h) - yb) / dy;
+            VOF(i, j) = std::clamp(fx * fy, 0.0, 1.0);
+        }
+    }
+
+    std::fill(u.begin(), u.end(), 0.0);
+    std::fill(v.begin(), v.end(), 0.0);
+    std::fill(p.begin(), p.end(), 0.0);
+    classify_cells();
+}
+
+void Grid::initialize_shallow(double fill_fraction) {
+    initialize_water(std::clamp(fill_fraction, 0.02, 0.25));
 }
 
 std::pair<double, double> Grid::interpolate_velocity(double x, double y) const {

@@ -46,6 +46,7 @@ public:
     std::vector<double> p;   ///< Pressure at cell centers, size NX*NY
     std::vector<double> vof; ///< Volume fraction at cell centers, size NX*NY [0=empty, 1=full]
     std::vector<CellType> cell_type; ///< Cell classification, size NX*NY
+    std::vector<uint8_t> is_obstacle; ///< Persistent internal SOLID mask (1 = obstacle), size NX*NY
 
     /**
      * @brief Construct a grid with given resolution and physical dimensions.
@@ -90,28 +91,55 @@ public:
     inline CellType  Type(int i, int j) const { return cell_type[idx(i, j)]; }
 
     /**
-     * @brief Classify cells as FLUID, EMPTY, or SOLID based on VOF values.
+     * @brief Classify cells as FLUID, EMPTY, or SOLID.
      *
-     * Wall cells (i=0, i=NX-1, j=0, j=NY-1) are always SOLID.
-     * Interior cells with VOF > threshold are FLUID, otherwise EMPTY.
+     * Cells flagged in is_obstacle are SOLID; the rest are FLUID if VOF
+     * exceeds the threshold, otherwise EMPTY. The outer-domain walls are
+     * face boundaries — there are no SOLID border cells.
      *
      * @param threshold VOF threshold for fluid classification (default 0.01)
      */
     void classify_cells(double threshold = 0.01);
 
     /**
-     * @brief Enforce no-slip / no-penetration boundary conditions at walls.
-     *
-     * Sets normal velocity to zero at wall faces and reflects tangential
-     * velocity for free-slip (or negates for no-slip).
-     */
-    void enforce_boundary_conditions();
-
-    /**
-     * @brief Initialize a still-water configuration.
+     * @brief Initialize a still-water configuration. Clears any obstacles.
      * @param fill_fraction Fraction of tank height filled with water (0 to 1)
      */
     void initialize_water(double fill_fraction);
+
+    /**
+     * @brief Initialize a classic dambreak: a column of water on the left.
+     * @param column_width_frac Width of the water column as fraction of tank width
+     * @param column_height_frac Height of the water column as fraction of tank height
+     */
+    void initialize_dambreak(double column_width_frac = 0.25,
+                             double column_height_frac = 0.4);
+
+    /**
+     * @brief Initialize dambreak with a vertical baffle in the right half.
+     * @param column_width_frac Width of the water column as fraction of tank width
+     * @param column_height_frac Height of the water column as fraction of tank height
+     * @param baffle_x_frac Baffle position as fraction of tank width
+     * @param baffle_height_frac Baffle height as fraction of tank height
+     * @param baffle_thickness_cells Baffle thickness in grid cells (>= 1)
+     */
+    void initialize_dambreak_baffle(double column_width_frac = 0.25,
+                                    double column_height_frac = 0.4,
+                                    double baffle_x_frac = 0.5,
+                                    double baffle_height_frac = 0.15,
+                                    int baffle_thickness_cells = 2);
+
+    void initialize_tilted_surface(double fill_fraction = 0.4,
+                                   double amplitude = 0.05);
+
+    void initialize_central_column(double column_width_frac = 0.15,
+                                   double column_height_frac = 0.6);
+
+    void initialize_two_columns(double column_width_frac = 0.15,
+                                double column_height_frac = 0.5,
+                                double gap_frac = 0.4);
+
+    void initialize_shallow(double fill_fraction = 0.12);
 
     /**
      * @brief Compute the velocity at an arbitrary point using bilinear interpolation.

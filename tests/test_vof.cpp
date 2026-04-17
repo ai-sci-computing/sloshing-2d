@@ -16,9 +16,8 @@ TEST_CASE("Total volume computation") {
     VOFTransport vof;
     double vol = vof.total_volume(grid);
 
-    // Boundary cells have VOF=0 (SOLID walls), so volume is less than Lx*Ly*fill.
-    // Interior: 14 columns × 3 full rows × cell_area = 14*3*(2/16)*(1/8) = 0.65625
-    CHECK(vol == doctest::Approx(0.65625).epsilon(0.05));
+    // With no SOLID border, 16 cols × 4 full rows × cell_area = 16*4*(2/16)*(1/8) = 1.0
+    CHECK(vol == doctest::Approx(1.0).epsilon(0.02));
 }
 
 TEST_CASE("VOF advection with zero velocity preserves field") {
@@ -44,12 +43,10 @@ TEST_CASE("VOF advection conserves mass approximately") {
     grid.initialize_water(0.4);
     grid.classify_cells();
 
-    // Set a uniform rightward flow
-    for (int i = 0; i <= grid.NX; ++i)
+    // Uniform rightward flow in the interior; wall faces stay at zero.
+    for (int i = 1; i < grid.NX; ++i)
         for (int j = 0; j < grid.NY; ++j)
             grid.U(i, j) = 0.5;
-
-    grid.enforce_boundary_conditions();
 
     VOFTransport vof;
     double vol_before = vof.total_volume(grid);
@@ -72,12 +69,9 @@ TEST_CASE("VOF values stay bounded [0,1]") {
     grid.initialize_water(0.5);
     grid.classify_cells();
 
-    // Set some non-trivial velocity
-    for (int i = 0; i <= grid.NX; ++i)
+    for (int i = 1; i < grid.NX; ++i)
         for (int j = 0; j < grid.NY; ++j)
             grid.U(i, j) = 1.0;
-
-    grid.enforce_boundary_conditions();
 
     VOFTransport vof;
     for (int step = 0; step < 50; ++step) {
